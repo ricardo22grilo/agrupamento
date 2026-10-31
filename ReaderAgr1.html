@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QRCode reader</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 12px;
+      background: #000; color: #eee;
+      font-family: system-ui, sans-serif;
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+    }
+    .wrap { width: 100%; max-width: 500px; display: flex; flex-direction: column; gap: 10px; }
+    #cam, button, textarea { width: 100%; font-size: 16px; border-radius: 10px; }
+    #cam { padding: 8px; }
+    #reader { width: 100%; border-radius: 16px; overflow: hidden; background: #333; }
+    #result { height: 110px; padding: 8px; resize: none; }
+    button { padding: 14px; border: 0; background: #2d7ff9; color: #fff; font-weight: 600; }
+    button.ok { background: #2e9e4f; }
+    #fs { background: #444; padding: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <button id="fs">Ecrã inteiro</button>
+    <select id="cam"></select>
+    <div id="reader"></div>
+    <textarea id="result" readonly></textarea>
+    <button id="copyButton">Copiar</button>
+  </div>
+
+<script>
+const html5Qrcode = new Html5Qrcode('reader', {
+  experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+});
+
+const config = {
+  fps: 15,
+  disableFlip: true,
+  qrbox: (w, h) => { const s = Math.floor(Math.min(w, h) * 0.8); return { width: s, height: s }; }
+};
+
+const onScan = (decodedText) => {
+  if (!decodedText) return;
+  let nif = '', fat_n = '', total = '', data = '';
+  for (const line of decodedText.split('*')) {
+    const i = line.indexOf(':');
+    const key = line.slice(0, i), value = line.slice(i + 1);
+    if (key === 'A') nif = value;
+    else if (key === 'G') fat_n = value;
+    else if (key === 'O') total = value.replace('.', ',');
+    else if (key === 'F') data = `${value.slice(6, 8)}/${value.slice(4, 6)}/${value.slice(0, 4)}`;
+  }
+  if (!nif && !fat_n) return; // not an invoice QR
+  document.getElementById('result').value =
+    `Data:${data}\nTotal:${total}\nFatura No:${fat_n}\nNIF:${nif}`;
+  if (navigator.vibrate) navigator.vibrate(80);
+};
+
+// Camera selection: prefer the C270, otherwise the phone's rear camera
+const sel = document.getElementById('cam');
+const hd = { width: { ideal: 1280 }, height: { ideal: 720 } };
+
+function start(value) {
+  const vc = value === 'rear'
+    ? { facingMode: 'environment', ...hd }
+    : { deviceId: { exact: value }, ...hd };
+  return html5Qrcode.start(value === 'rear' ? { facingMode: 'environment' } : value,
+                           { ...config, videoConstraints: vc }, onScan)
+    .catch(err => { document.getElementById('result').value = 'Erro câmara: ' + err; });
+}
+
+Html5Qrcode.getCameras().then(cams => {
+  sel.add(new Option('Câmara traseira (telemóvel)', 'rear'));
+  cams.forEach(c => sel.add(new Option(c.label || c.id, c.id)));
+  const c270 = cams.find(c => /c270/i.test(c.label));
+  sel.value = c270 ? c270.id : 'rear';
+  start(sel.value);
+}).catch(() => start('rear'));
+
+sel.onchange = () => {
+  const go = () => start(sel.value);
+  html5Qrcode.isScanning ? html5Qrcode.stop().then(go) : go();
+};
+
+// Copy: Data, 4 empty columns, Total, Fatura No, NIF (tab-separated)
+document.getElementById('copyButton').addEventListener('click', async () => {
+  const v = document.getElementById('result').value.split('\n').map(l => l.slice(l.indexOf(':') + 1));
+  if (v.length < 4) return;
+  const row = [v[0], '', '', '', '', v[1], v[2], v[3]].join('\t');
+  const btn = document.getElementById('copyButton');
+  try {
+    await navigator.clipboard.writeText(row);
+  } catch {
+    const t = document.createElement('textarea');
+    t.value = row; document.body.appendChild(t); t.select();
+    document.execCommand('copy'); t.remove();
+  }
+  btn.textContent = 'Copiado ✓'; btn.classList.add('ok');
+  setTimeout(() => { btn.textContent = 'Copiar'; btn.classList.remove('ok'); }, 1500);
+});
+
+// Fullscreen toggle
+document.getElementById('fs').onclick = () =>
+  document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+</script>
+</body>
+</html>
